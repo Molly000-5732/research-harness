@@ -1,0 +1,23 @@
+# DeepSeek Harness is installed separately on each computer.
+/deepseek-harness-master/
+/deepseek-harness/
+/deepseek-harness*.zip
+
+# Credentials and local runtime files.
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+.sessions/
+.storages/
+*.log
+
+# Editor and OS files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

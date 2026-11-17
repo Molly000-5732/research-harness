@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本地 Harness</title>
+  <style>
+    :root { font-family: "Inter", "Microsoft YaHei", sans-serif; color: #202b3c; background: #f4f6fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 840px; margin: 64px auto; padding: 0 24px; }
+    h1 { font-size: 30px; letter-spacing: -.8px; margin-bottom: 12px; }
+    p { color: #647187; line-height: 1.7; }
+    form, section { background: white; border: 1px solid #dfe5ee; border-radius: 16px; padding: 26px; margin-top: 24px; }
+    label, h2 { display: block; font-size: 16px; font-weight: 600; margin: 0 0 14px; }
+    textarea { width: 100%; min-height: 150px; padding: 14px; border: 1px solid #cbd4e2; border-radius: 8px; resize: vertical; font: inherit; line-height: 1.6; }
+    textarea:focus { outline: 2px solid #4465ed; outline-offset: 2px; }
+    button { padding: 12px 20px; border: 0; border-radius: 8px; background: #3558db; color: white; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .actions { display: flex; align-items: center; gap: 18px; margin-top: 16px; }
+    #status { font-size: 14px; color: #647187; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.8; margin: 0; min-height: 72px; }
+    .error { color: #b42318; }
+    @media (max-width: 600px) { main { margin: 28px auto; padding: 0 16px; } form, section { padding: 20px; } .actions { flex-wrap: wrap; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>本地 Harness</h1>
+    <p>输入任务，调用本机 DeepSeek Harness。每次发送开启独立任务。</p>
+    <form id="chat">
+      <label for="message">任务内容</label>
+      <textarea id="message" required maxlength="16000" placeholder="例如，请只回答：连接成功"></textarea>
+      <div class="actions">
+        <button id="send" type="submit">发送给 Harness</button>
+        <span id="status" role="status">等待输入</span>
+      </div>
+    </form>
+    <section aria-labelledby="result-title">
+      <h2 id="result-title">返回结果</h2>
+      <pre id="result" aria-live="polite">发送后，结果会显示在这里。</pre>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector('#chat');
+    const message = document.querySelector('#message');
+    const send = document.querySelector('#send');
+    const status = document.querySelector('#status');
+    const result = document.querySelector('#result');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!message.value.trim()) { message.focus(); return; }
+      send.disabled = true;
+      status.textContent = 'Harness 正在执行…';
+      result.classList.remove('error');
+      result.textContent = '正在等待返回结果…';
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: message.value })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
+        result.textContent = data.reply;
+        status.textContent = '执行完成';
+      } catch (error) {
+        result.textContent = error.message;
+        result.classList.add('error');
+        status.textContent = '执行失败';
+      } finally {
+        send.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
