@@ -2,6 +2,11 @@
 
 本地 AI 科研工作台，使用官方 DeepSeek Harness Python SDK 的完整 `sdk` profile。支持按项目组织会话、多轮交流、历史展示和服务重启后的会话恢复。
 
+## 完整文档
+
+- [安装与运行指南](docs/installation.md) 从下载官方源码开始，覆盖环境准备、SDK 安装、配置、验收和故障排查。
+- [项目文档](docs/project.md) 说明代码框架、当前功能、数据与接口，以及完整版开发路线。
+
 ## 安装
 
 需要 Python 3.10+，支持官方运行时提供的 Windows x64、Linux x64/arm64 和 macOS arm64 平台。SDK 会安装匹配版本的运行时。
