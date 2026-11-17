@@ -1,125 +1,169 @@
-"""Serve the local HTML form and run one Harness headless task per request."""
+"""Local Research Harness HTTP service, backed by the official Python SDK."""
 
 import argparse
 import json
+import mimetypes
 import os
 from pathlib import Path
-import shutil
-import subprocess
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+from dotenv import load_dotenv
+
+from harness import HarnessManager, safe_error
+from storage import AppError, Storage
 
 
-PAGE = Path(__file__).with_name("index.html")
-RUN_LOCK = threading.Lock()
+ROOT = Path(__file__).resolve().parent
+ASSETS = {"/": "index.html", "/app.js": "app.js", "/styles.css": "styles.css"}
 
 
-def run_task(root, message):
-    command = [
-        shutil.which("node"), "--import", "tsx/esm", "apps/cli/src/bin.ts",
-        "--profile", "headless", "--approval-policy", "never", "-",
-    ]
-    with subprocess.Popen(
-        command, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        start_new_session=os.name != "nt",
-    ) as process:
+class DataLock:
+    """Prevent two application processes from recovering the same local database."""
+
+    def __init__(self, directory):
+        directory.mkdir(parents=True, exist_ok=True)
+        self.file = (directory / "app.lock").open("a+b")
+        self.file.seek(0, 2)
+        if self.file.tell() == 0:
+            self.file.write(b"0")
+            self.file.flush()
+        self.file.seek(0)
         try:
-            output, errors = process.communicate(message, timeout=300)
-        except subprocess.TimeoutExpired:
             if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                    capture_output=True, check=False,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
+                import msvcrt
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
             else:
-                import signal
-                os.killpg(process.pid, signal.SIGKILL)
-            process.communicate()
-            raise TimeoutError("Harness 执行超过 300 秒，已停止本次任务。")
-    if process.returncode:
-        raise RuntimeError(errors.strip()[-6000:] or output.strip()[-6000:] or "Harness 执行失败。")
-    if not output.strip():
-        raise RuntimeError("Harness 已退出，但没有返回文本。")
-    return output.strip()
+                import fcntl
+                fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.file.close()
+            raise RuntimeError("该数据目录已有服务正在使用，请使用现有服务或指定其他 --data-dir。")
+
+    def close(self):
+        self.file.close()
 
 
 class Handler(BaseHTTPRequestHandler):
-    def send_json(self, status, data):
+    def respond(self, status, data):
         payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_payload(status, payload, "application/json; charset=utf-8")
+
+    def send_payload(self, status, payload, content_type):
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            # Results are already durable when a browser navigates away.
+            pass
 
     def do_GET(self):
-        if self.path != "/":
-            self.send_json(404, {"error": "页面不存在。"})
-            return
-        payload = PAGE.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        self.dispatch("GET")
 
     def do_POST(self):
-        if self.path != "/api/chat":
-            self.send_json(404, {"error": "接口不存在。"})
-            return
+        self.dispatch("POST")
+
+    def dispatch(self, method):
+        try:
+            path = urlsplit(self.path).path
+            if method == "GET" and path in ASSETS:
+                asset = ROOT / ASSETS[path]
+                content_type = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+                self.send_payload(200, asset.read_bytes(), content_type + "; charset=utf-8")
+                return
+            data = self.read_json() if method == "POST" else {}
+            status, result = self.api(method, path.strip("/").split("/"), data)
+            self.respond(status, result)
+        except AppError as error:
+            self.respond(error.status, {"error": str(error)})
+        except Exception as error:
+            self.respond(500, {"error": safe_error(error)})
+
+    def read_json(self):
         origin = self.headers.get("Origin")
         if origin and origin != f"http://{self.headers.get('Host')}":
-            self.send_json(403, {"error": "请从本地服务页面发送请求。"})
-            return
+            raise AppError(403, "请从本地服务页面发送请求。")
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 65536:
-                raise ValueError("请求长度应在 1 至 65536 字节之间。")
+            if not 0 < size <= 131072:
+                raise ValueError("请求长度应在 1 至 131072 字节之间。")
             data = json.loads(self.rfile.read(size))
-            message = data.get("message") if isinstance(data, dict) else None
-            if not isinstance(message, str) or not message.strip():
-                raise ValueError("请输入任务文本。")
+            if not isinstance(data, dict):
+                raise ValueError("请求内容必须是 JSON 对象。")
+            return data
         except (ValueError, UnicodeError) as error:
-            self.send_json(400, {"error": str(error)})
-            return
-        if not RUN_LOCK.acquire(blocking=False):
-            self.send_json(409, {"error": "已有任务正在执行，请等待完成。"})
-            return
-        try:
-            reply = run_task(self.server.harness_root, message)
-            self.send_json(200, {"reply": reply})
-        except TimeoutError as error:
-            self.send_json(504, {"error": str(error)})
-        except (OSError, RuntimeError) as error:
-            self.send_json(502, {"error": str(error)})
-        finally:
-            RUN_LOCK.release()
+            raise AppError(400, str(error)) from error
+
+    def api(self, method, parts, data):
+        store = self.server.storage
+        if parts == ["api", "projects"]:
+            if method == "GET":
+                return 200, {"projects": store.list_projects()}
+            return 201, {"project": store.create_project(data.get("name"), data.get("directory"))}
+        if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "sessions":
+            if method == "GET":
+                return 200, {"sessions": store.list_sessions(parts[2])}
+            return 201, {"session": store.create_session(parts[2])}
+        if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "sessions"]:
+            return 200, store.session(parts[2])
+        if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "runs"]:
+            return 200, {"run": store.run(parts[2])}
+        if method == "POST" and parts == ["api", "chat"]:
+            run = self.server.manager.submit(data.get("session_id"), data.get("request_id"), data.get("message"))
+            return 202, {"run": run}
+        raise AppError(404, "接口不存在。")
+
+
+def make_server(port, storage, manager):
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.daemon_threads = True
+    server.storage = storage
+    server.manager = manager
+    return server
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("harness_root", nargs="?", type=Path,
-                        default=PAGE.parent.parent / "deepseek-harness-master")
+                        help="兼容旧启动命令，仅用于定位该目录下的 .env")
     parser.add_argument("--port", type=int, default=8001)
+    parser.add_argument("--data-dir", type=Path, default=ROOT.parent / ".research-harness")
+    parser.add_argument("--env-file", type=Path)
+    parser.add_argument("--model", default="deepseek-v4-flash")
     args = parser.parse_args()
-    root = args.harness_root.resolve()
-    if not (root / "apps/cli/src/bin.ts").is_file():
-        parser.error(f"找不到 Harness CLI 入口，请检查目录 {root}")
-    if not shutil.which("node"):
-        parser.error("找不到 Node.js，请安装 Node.js >=24.9。")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    server.harness_root = root
-    print(f"Harness UI running at http://127.0.0.1:{args.port}", flush=True)
+    env_file = args.env_file
+    if env_file is None:
+        env_file = (args.harness_root / ".env") if args.harness_root else ROOT.parent / ".env"
+    if args.env_file and not env_file.is_file():
+        parser.error("--env-file 指定的文件不存在。")
+    load_dotenv(env_file.resolve(), override=False)
+    data_dir = args.data_dir.resolve()
     try:
+        data_lock = DataLock(data_dir)
+    except RuntimeError as error:
+        parser.error(str(error))
+    manager = None
+    server = None
+    try:
+        store = Storage(data_dir / "app.sqlite3")
+        manager = HarnessManager(store, data_dir / "dsh-home", args.model)
+        server = make_server(args.port, store, manager)
+        store.recover()
+        print(f"Research Harness running at http://127.0.0.1:{server.server_port}", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
+        if server:
+            server.server_close()
+        if manager:
+            manager.close()
+        data_lock.close()
 
 
 if __name__ == "__main__":

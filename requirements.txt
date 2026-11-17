@@ -1,0 +1,2 @@
+deepseek-harness-sdk==0.2.2rc2
+python-dotenv==1.2.1

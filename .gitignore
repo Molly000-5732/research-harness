@@ -4,6 +4,7 @@
 /deepseek-harness*.zip
 
 # Credentials and local runtime files.
+.research-harness/
 .env
 .env.*
 !.env.example
