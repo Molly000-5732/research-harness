@@ -82,6 +82,18 @@ class ResearchTests(unittest.TestCase):
             '{"title":"Duplicate","url":"https://example.org"}]}\n```')
         self.assertEqual(flags, [{"title": "Source", "url": "https://example.org", "abstract": "", "analysis": ""}])
 
+    def test_followup_uses_current_draft_and_discards_old_background_draft(self):
+        self.research.update_background(self.project, 'Underwater docking')
+        self.stage_run('questions', 'q1', 'Current docking questions with literature evidence')
+        self.research.send(self.project, 'questions', {'request_id': 'q2', 'message': '只关注末端精度'})
+        self.assertIn('Current docking questions with literature evidence', self.prompt)
+        self.assertIn('只关注末端精度', self.prompt)
+        self.assertIn('Underwater docking', self.prompt)
+        self.store.finish('q2', 'completed', 'Refined docking questions')
+        self.research.update_background(self.project, 'New project scope')
+        self.research.send(self.project, 'questions', {'request_id': 'q3', 'message': '重新调研'})
+        self.assertNotIn('Refined docking questions', self.prompt)
+
     def test_experiment_approval_binds_the_reviewed_call(self):
         answered = []
         client = SimpleNamespace(respond=lambda request_id, result: answered.append((request_id, result)))

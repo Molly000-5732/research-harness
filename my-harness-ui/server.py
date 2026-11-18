@@ -4,19 +4,21 @@ import argparse
 import json
 import mimetypes
 import os
+import uuid
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, unquote
 
 from dotenv import load_dotenv
 
 from harness import HarnessManager, safe_error
 from research import Research, STAGES
-from storage import AppError, Storage
+from storage import AppError, Storage, required_text
+import project_files
 
 
 ROOT = Path(__file__).resolve().parent
-ASSETS = {"/": "index.html", "/app.js": "app.js", "/research.js": "research.js", "/styles.css": "styles.css"}
+ASSETS = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/markdown.js": "markdown.js", "/markdown.css": "markdown.css", "/vendor/marked.umd.js": "vendor/marked.umd.js", "/vendor/purify.min.js": "vendor/purify.min.js"}
 
 
 class DataLock:
@@ -80,6 +82,15 @@ class Handler(BaseHTTPRequestHandler):
                 content_type = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
                 self.send_payload(200, asset.read_bytes(), content_type + "; charset=utf-8")
                 return
+            parts = path.strip("/").split("/")
+            if method == "GET" and len(parts) == 5 and parts[:2] == ["api", "projects"] and parts[3] == "files":
+                target = project_files.resolve_file(self.server.storage.project(parts[2]), unquote(parts[4]))
+                if not target.is_file():
+                    raise AppError(404, "文件不存在。")
+                if target.stat().st_size > 25 * 1024 * 1024:
+                    raise AppError(400, "文件超过25MB，请从项目目录查看。")
+                self.send_payload(200, target.read_bytes(), "application/octet-stream")
+                return
             data = self.read_json() if method == "POST" else {}
             status, result = self.api(method, path.strip("/").split("/"), data)
             self.respond(status, result)
@@ -94,8 +105,9 @@ class Handler(BaseHTTPRequestHandler):
             raise AppError(403, "请从本地服务页面发送请求。")
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if not 0 < size <= 131072:
-                raise ValueError("请求长度应在 1 至 131072 字节之间。")
+            limit = 15 * 1024 * 1024 if urlsplit(self.path).path.endswith('/files') else 131072
+            if not 0 < size <= limit:
+                raise ValueError(f"请求长度应在 1 至 {limit} 字节之间。")
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError("请求内容必须是 JSON 对象。")
@@ -108,7 +120,19 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "projects"]:
             if method == "GET":
                 return 200, {"projects": store.list_projects()}
+            if "field" in data:
+                field = required_text(data.get("field"), "研究领域", 200)
+                directory = store.path.parent / "projects" / uuid.uuid4().hex
+                directory.mkdir(parents=True)
+                project = store.create_project(field, str(directory))
+                self.server.research.update_background(project["id"], field)
+                return 201, {"project": project}
             return 201, {"project": store.create_project(data.get("name"), data.get("directory"))}
+        if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "files":
+            project = store.project(parts[2])
+            if method == "GET":
+                return 200, {"files": project_files.files(project)}
+            return 201, {"file": project_files.upload(project, data)}
         if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "sessions":
             if method == "GET":
                 return 200, {"sessions": store.list_sessions(parts[2])}
@@ -149,6 +173,16 @@ class Handler(BaseHTTPRequestHandler):
                     return 200, {"session_id": research.session(project_id, stage)}
                 if action == "chat":
                     return 202, {"run": research.send(project_id, stage, data)}
+                if stage == 'plan' and action in ('open-document', 'confirm-document'):
+                    if manager.active:
+                        raise AppError(409, '请等待当前任务完成后打开或提交方案文档。')
+                    target, content, metadata = project_files.read_plan_document(
+                        self.server.storage.project(project_id), data.get('path'))
+                    if action == 'open-document':
+                        project_files.open_plan_document(target)
+                        return 200, {'document': metadata}
+                    state = research.confirm(project_id, 'plan', {'run_id': data.get('run_id'), 'content': content})
+                    return 200, {'research': state, 'document': metadata}
                 if action == "confirm":
                     if manager.active:
                         raise AppError(409, "请等待当前任务完成后确认结果。")
@@ -169,7 +203,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("harness_root", nargs="?", type=Path,
                         help="兼容旧启动命令，仅用于定位该目录下的 .env")
-    parser.add_argument("--port", type=int, default=8001)
+    parser.add_argument("--port", type=int, default=8003)
     parser.add_argument("--data-dir", type=Path, default=ROOT.parent / ".research-harness")
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--model", default="deepseek-v4-flash")

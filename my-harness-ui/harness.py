@@ -1,6 +1,7 @@
 """Official SDK runtimes and serialized background user tasks."""
 
 import os
+import json
 from pathlib import Path
 import re
 import threading
@@ -254,9 +255,41 @@ class HarnessManager:
                 runtime.record_experiment(result)
             else:
                 result = handle.run(message)
+            final_reply = result.final_response
+            if result.finish_reason == "completed":
+                with self.storage.connect() as db:
+                    structured_run = db.execute(
+                        """SELECT research_runs.inputs, research_sessions.stage FROM research_runs JOIN research_sessions
+                           ON research_sessions.session_id=? WHERE research_runs.run_id=?
+                           AND research_sessions.stage IN ('questions', 'painpoints')""", (session["id"], request_id),
+                    ).fetchone()
+                    previous = [row["reply"] for row in db.execute(
+                        """SELECT reply FROM runs JOIN research_runs ON runs.id=research_runs.run_id
+                           WHERE session_id=? AND status='completed' AND research_runs.inputs=?""",
+                        (session["id"], structured_run["inputs"]),
+                    )] if structured_run else []
+                if structured_run and structured_run["stage"] == "painpoints":
+                    revision = json.loads(structured_run["inputs"]).get("questions")
+                    with self.storage.connect() as db:
+                        source = db.execute("""SELECT runs.reply FROM research_confirmations JOIN runs
+                            ON runs.id=research_confirmations.run_id WHERE research_confirmations.id=?""", (revision,)).fetchone()
+                        if source:
+                            previous.append(source["reply"])
+                if structured_run:
+                    from question_evidence import grounded_reply, choices, payload
+                    evidence_events = list(result.events)
+                    stage_key = structured_run["stage"]
+                    if not payload(result.final_response, stage_key):
+                        self.storage.notice(request_id, "正在整理为可选择的条目及文献依据。")
+                        result = handle.run(f"当前阶段为{stage_key}，请将本轮成果完整整理为可选择的独立条目。末尾附JSON代码块，包含{stage_key}数组，各项包含title、description和evidence，evidence各项包含title、url、locator、quote、reason。保留实际阅读或前序已核对的原文证据，不得编造；不修改工作区文件、不执行实验、不重新进行无关调研。证据不足时明确说明并返回空数组。")
+                        evidence_events.extend(result.events)
+                    reply = grounded_reply(result.final_response, evidence_events, previous, key=stage_key)
+                    if not any(any(e["verified"] for e in q["evidence"]) for q in choices(reply, stage_key)):
+                        self.storage.notice(request_id, "尚无可核对的正文证据。请继续对话，让 Harness 打开论文正文并补充原文出处。")
+                    final_reply = reply
             reason = result.finish_reason
             if reason == "completed":
-                self.storage.finish(request_id, "completed", result.final_response, finish_reason=reason)
+                self.storage.finish(request_id, "completed", final_reply, finish_reason=reason)
             else:
                 details = [event.get("data", {}).get("reason") for event in result.events
                            if event.get("type") == "turn/end"]

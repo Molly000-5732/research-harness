@@ -1,126 +1,60 @@
-# Research Harness
+# Research Harness 科研工作台
 
-本地 AI 科研工作台，使用官方 DeepSeek Harness Python SDK 的完整 `sdk` profile。在同一个项目中组织多轮会话、文献调研、方案规划与实验执行。
+基于官方 DeepSeek Harness Python SDK 的本地科研工作台。当前版本保留研究总览、问题调研、痛点定位、方案规划、实验验证、文献库和研究记录，采用暖米色与深绿色界面。
 
-## 完整文档
+## 安装与启动
 
-- [安装与运行指南](docs/installation.md) 从下载官方源码开始，覆盖环境准备、SDK 安装、配置、验收和故障排查。
-- [项目文档](docs/project.md) 说明代码框架、当前功能、数据与接口，以及完整版开发路线。
+需要 Python 3.10+、网络连接及可用的 DeepSeek API 密钥。发布验证环境为 Windows x64、Python 3.14。浏览器运行无需 Node.js，也不依赖 CDN。
 
-## 安装
+1. 下载本仓库 ZIP 并解压，或克隆仓库。
+2. Windows 双击 `SETUP.cmd` 安装虚拟环境与固定版本的依赖。
+3. 复制 `.env.example` 为 `.env`，填写 `DEEPSEEK_API_KEY`。可选设置 `DEEPSEEK_BASE_URL`。
+4. 双击 `START.cmd`，在浏览器打开 <http://127.0.0.1:8003/>。运行期间保持服务进程开启。
 
-需要 Python 3.10+，支持官方运行时提供的 Windows x64、Linux x64/arm64 和 macOS arm64 平台。SDK 会安装匹配版本的运行时。
-
-在 Windows PowerShell 中执行以下命令。
+也可以手动启动：
 
 ```powershell
-git clone https://github.com/boliQi/research-harness.git
-cd research-harness
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe my-harness-ui/server.py --port 8003
 ```
 
-Linux 和 macOS 可用以下命令创建环境。
+macOS / Linux 使用 `.venv/bin/python` 替代 Windows 的 Python 路径。服务支持 `--port`、`--data-dir`、`--env-file` 和 `--model`；默认模型为 `deepseek-v4-flash`。模型可用性和费用由账号与官方服务决定。
 
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-```
+## 使用流程
 
-复制 `.env.example` 为本机 `.env`，填写 `DEEPSEEK_API_KEY`。也可以使用已有的 Harness 凭据文件启动。
+1. **新建项目**：填写项目名称和已经存在的工作区绝对路径。在研究总览填写并保存研究背景，包括领域、目标、限制和已有材料。
+2. **问题调研**：SDK 搜索并读取文献，输出带说明与文献依据的候选问题。展开“文献依据”可查看原文片段、章节位置、来源和核对状态，选择一个问题进入下一阶段。
+3. **痛点定位**：基于选定问题和文献生成可选痛点卡片，确认一项交给方案规划。
+4. **方案规划**：查看实施流程概览，点击“打开完整方案文档”，在本地应用中修改并保存。点击“刷新文档并提交到实验验证”，服务端读取磁盘最新全文，保存为最终方案；此操作不会自动运行实验。
+5. **实验验证**：通过对话规划实验、生成代码、运行和读取结果。需要审批的工具操作可查看参数并批准一次或拒绝。也可上传已有结果进行分析。
+
+四个阶段均保留追加需求输入框。只有点击发送才提交输入；模型结合当前主题、上游已确认内容和当前成果进行修订。历史对话与文献依据默认折叠。重新确认上游成果会使下游旧结果过期，需要重新生成或确认。
+
+## 正文与证据说明
+
+搜索、正文读取、模型及文件 / Shell 工具调用统一通过官方 SDK，不另接独立模型或搜索 API。SDK 访问的网页、论文站点和工具服务取决于官方运行时与网站可访问性。
+
+“原文片段已核对”表示引文在实际成功读取的工具返回中匹配，且来源相符；搜索摘要不作为核对依据。该标记不表示整篇论文已完整下载或读完。付费墙、PDF 格式及长网页截断仍可能造成正文缺失；可上传合法获取的材料，再要求模型补充读取。证据不足的候选条目不能选择。
+
+## 本地数据与文档
+
+项目工作区由用户指定；附件位于该工作区的 `research-files/literature` 与 `research-files/results`。默认应用数据目录是仓库根目录下 `.research-harness`，其中 `app.sqlite3` 与 `dsh-home` 共同保存项目索引、任务、对话和 SDK 会话。备份时请先正常停止服务，并同时备份数据目录及各项目工作区。
+
+附件上传上限 10 MB，下载上限 25 MB，最多列出 300 个常见类型文件。完整方案支持 UTF-8 Markdown / TXT，最多 60000 字符、512 KB；只读取登记工作区内的文件。任务刷新页面后继续运行；异常退出的未完成任务会标记为待核对，请检查实际产物后再继续。
+
+密钥、虚拟环境、缓存和个人研究数据不在发布包中，每台设备需自行安装和配置。此版本不自动迁移旧版数据。
+
+## 开发与验证
 
 ```powershell
-.venv\Scripts\python.exe my-harness-ui/server.py --env-file "D:\path\to\deepseek-harness\.env"
-```
-
-使用仓库根目录的 `.env` 时，可以直接启动。
-
-```powershell
-.venv\Scripts\python.exe my-harness-ui/server.py
-```
-
-Linux 或 macOS 使用 `.venv/bin/python my-harness-ui/server.py`。打开 [本地页面](http://127.0.0.1:8001)。服务监听 `127.0.0.1`，按 Ctrl+C 关闭服务和其 SDK 运行时。
-
-## 科研流程
-
-先点击「添加项目」，填写名称和已存在的本机绝对目录，再到「研究总览」保存背景。
-
-| 阶段 | 使用方式 |
-| --- | --- |
-| 问题调研 | 让 Harness 搜索并阅读论文。确认研究问题后，文献库保存本轮的文献清单，包括题目、可用摘要、AI 分析和来源。 |
-| 痛点定位 | 根据已确认的研究问题和逐篇论文材料提出痛点。通过对话调整后，确认要解决的痛点。 |
-| 方案规划 | 根据项目背景和已确认痛点生成方案。可继续对话修改，也可编辑最终确认内容。 |
-| 实验验证 | 点击「运行实验」，让 Harness 在项目目录执行已确认的方案，根据实际工具输出和产物分析结果。 |
-
-每个阶段各有一个持久 Session，刷新或重启服务后仍可继续。下一阶段读取上游已确认的内容。更新上游后，下游旧结果会标记过期，并保留供查阅。「会话」页可另外新建普通聊天。
-
-项目目录是 Agent 的工作目录，文件工具和 Shell 在该目录执行任务。运行 Python 时，使用本机或项目已配置的 Python 环境和依赖。网页搜索需要搜索提供方可用的凭据、网络和服务支持。模型调用、文件操作和工具执行均由官方 Harness 完成。
-
-当前采用 `workspace-write` 权限预设。实验验证页支持当前 Session 的单次工具审批，其他会话需要人工批准的操作会被拒绝并记录原因。
-
-Windows 沙箱需要项目目录由当前用户拥有，并具备包括 `WRITE_OWNER` 在内的完整权限。仅继承 Modify 权限的目录可能出现 `SetNamedSecurityInfoW` 错误。验证中为应用新建的验收目录补齐当前用户完整权限后，Python 已在 `workspace-write` 下成功执行。参考[Windows 沙箱要求](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sandbox/sandbox-windows-acl/README.zh.md)。
-
-## 配置
-
-| 参数 | 默认值 | 含义 |
-| --- | --- | --- |
-| `--port` | `8001` | 本机 HTTP 端口 |
-| `--data-dir` | 仓库根目录下的 `.research-harness` | 数据库及 Harness home |
-| `--env-file` | 仓库根目录的 `.env` | 本机环境配置文件 |
-| `--model` | `deepseek-v4-flash` | `deepseek-official` 路由中的模型 ID |
-
-启动环境中的变量优先于 `--env-file`。可选的 `DEEPSEEK_BASE_URL` 用于兼容网关。使用旧的位置参数 `python server.py <Harness目录>` 时，应用从该目录读取 `.env`，并使用 SDK 配套运行时执行任务。
-
-Windows `0.2.2rc2` 运行时存在非 C 盘启动时原生模块加载失败的问题。本应用将运行时进程目录设置为 `C:\`，SDK 的 `cwd` 仍明确指定项目目录。该处理已用于验证 D 盘项目的真实调用。参考[上游问题](https://github.com/deepseek-ai/deepseek-harness/discussions/10269)。
-
-## 代码与数据
-
-```text
-my-harness-ui/
-  server.py       HTTP 接口、参数和数据目录锁
-  harness.py      官方 SDK、项目运行时、Session、后台任务与交互回调
-  storage.py      SQLite 项目索引、展示消息和任务状态
-  research.py     阶段会话、提示词、文献与已确认版本
-  index.html      页面结构
-  app.js          项目切换、会话加载、发送与任务轮询
-  research.js     科研导航、阶段交互、文献库和实验审批
-  styles.css      页面样式
-  tests/          无密钥回归测试
-.research-harness/
-  app.sqlite3     应用索引和页面历史
-  dsh-home/       Harness profile、凭据存储及持久化会话
-```
-
-应用索引与 Harness home 共同组成可恢复的数据。固定 `--data-dir`，并保持项目原目录可用。SDK 恢复的是会话历史，Python 进程、Shell 和浏览器等外部状态需要任务重新建立。旧 Headless Demo 的历史保留在原存储中，本应用从新的项目索引开始登记。
-
-各项目按需持有长驻 SDK 实例。首期同时执行一个用户任务，切换页面与刷新浏览器时任务继续执行。请求 ID用于幂等提交，已接受的请求可用同一 ID查询或重新提交。服务异常退出后，未完成任务标记为结果待确认，后续输入由用户明确发起。
-
-`.research-harness/`、`.env`、虚拟环境、源码版 Harness 和 ZIP 已由 `.gitignore` 排除。两台电脑通过 Git 同步应用代码，各自配置目录、凭据和历史。
-
-## HTTP 接口
-
-| 方法与路径 | 功能 |
-| --- | --- |
-| `GET /api/projects` | 获取项目列表 |
-| `POST /api/projects` | 用 `name` 和 `directory` 创建项目 |
-| `GET /api/projects/{id}/sessions` | 获取项目会话列表 |
-| `POST /api/projects/{id}/sessions` | 创建空会话，正文为 `{}` |
-| `GET /api/sessions/{id}` | 获取会话、消息和任务 |
-| `POST /api/chat` | 用 `session_id`、`request_id`、`message` 提交任务，返回 `202` 和 `run` |
-| `GET /api/runs/{id}` | 获取任务状态、结果、错误及交互说明 |
-| `GET /api/projects/{id}/research` | 获取研究背景、各阶段状态和文献库 |
-| `POST /api/projects/{id}/research` | 保存研究背景 |
-| `POST /api/projects/{id}/research/{stage}/{action}` | `session` 打开阶段会话，`chat` 发送，`confirm` 确认输出 |
-| `GET/POST /api/runs/{id}/approval` | 查询或回答当前实验的工具审批 |
-
-任务状态为 `queued`、`running`、`completed`、`error` 或 `interrupted`。同一请求 ID用于不同消息返回 `409`，其他任务执行期间的新请求也返回 `409`。页面每秒轮询当前任务，最终回复在写入 SQLite 后可读取。
-
-## 测试
-
-```powershell
-.venv\Scripts\python.exe -m unittest discover -s my-harness-ui/tests -v
+.venv\Scripts\python.exe -m unittest discover -s my-harness-ui/tests -q
+.venv\Scripts\python.exe -m pip check
 node --check my-harness-ui/app.js
-node --check my-harness-ui/research.js
+npm ci --prefix dev/markdown-renderer --ignore-scripts
+node my-harness-ui/tests/test_conversation.cjs "$PWD/dev/markdown-renderer/node_modules/jsdom"
+node my-harness-ui/tests/test_markdown.cjs "$PWD/dev/markdown-renderer/node_modules/jsdom"
+node my-harness-ui/tests/test_plan_document.cjs "$PWD/dev/markdown-renderer/node_modules/jsdom"
 ```
 
-无密钥测试覆盖项目与会话恢复、请求幂等、阶段交接、旧结果失效、文献解析及工具审批。真实 SDK 验收包括网页搜论文、Python 生成并读回 CSV，以及重启后继续实验会话。
+前端回归测试建议使用 Node.js 24+；Node.js 仅用于开发检查。详见 [架构说明](docs/ARCHITECTURE.md) 和 [发布验证](docs/VALIDATION.md)。第三方库许可随源码保留在 `my-harness-ui/vendor`。
