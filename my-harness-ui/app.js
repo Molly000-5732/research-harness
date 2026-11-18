@@ -49,6 +49,7 @@ function setComposer(busy = false) {
   $('#send').disabled = !state.sessionId || busy;
   $('#send').textContent = busy ? '正在执行…' : '发送消息 ↑';
   $('#session-hint').textContent = state.sessionId ? '对话历史自动保存在本机' : '请选择项目并新建会话';
+  window.researchUI?.composer(busy);
 }
 
 async function selectProject(id, preferredSession = null) {
@@ -56,6 +57,7 @@ async function selectProject(id, preferredSession = null) {
   state.version += 1;
   const version = state.version;
   state.projectId = id;
+  window.researchUI?.reset();
   state.sessionId = null;
   state.sessions = [];
   state.snapshot = '';
@@ -76,6 +78,7 @@ async function selectProject(id, preferredSession = null) {
   renderNavigation();
   const session = state.sessions.find((item) => item.id === preferredSession) || state.sessions[0];
   if (session) await selectSession(session.id);
+  if (state.projectId === id) await window.researchUI?.restore(id);
 }
 
 async function selectSession(id) {
@@ -140,6 +143,8 @@ async function refreshSession(version) {
     const last = data.runs.at(-1);
     const busy = Boolean(last && activeStatuses.has(last.status));
     setComposer(busy);
+    await window.researchUI?.refresh(data, version);
+    if (version !== state.version) return;
     $('#status').textContent = last ? statusLabels[last.status] : '新会话';
     const session = state.sessions.find((item) => item.id === state.sessionId);
     if (session) session.title = data.session.title;
@@ -166,7 +171,7 @@ $('#chat').addEventListener('submit', async (event) => {
   setComposer(true);
   showError();
   try {
-    await api('/api/chat', request);
+    await api(window.researchUI?.chatPath() || '/api/chat', request);
     save('pending', null);
     save(`draft.${request.session_id}`, '');
     if (version !== state.version) return;

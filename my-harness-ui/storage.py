@@ -60,6 +60,23 @@ class Storage:
                 CREATE INDEX IF NOT EXISTS sessions_by_project ON sessions(project_id, updated_at);
                 CREATE INDEX IF NOT EXISTS messages_by_session ON messages(session_id, id);
                 CREATE INDEX IF NOT EXISTS runs_by_session ON runs(session_id, created_at);
+                CREATE TABLE IF NOT EXISTS research_projects (
+                    project_id TEXT PRIMARY KEY REFERENCES projects(id),
+                    background TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS research_sessions (
+                    project_id TEXT NOT NULL REFERENCES projects(id),
+                    stage TEXT NOT NULL, session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id),
+                    PRIMARY KEY(project_id, stage)
+                );
+                CREATE TABLE IF NOT EXISTS research_runs (
+                    run_id TEXT PRIMARY KEY REFERENCES runs(id), inputs TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS research_confirmations (
+                    id INTEGER PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+                    run_id TEXT NOT NULL REFERENCES runs(id), content TEXT NOT NULL,
+                    papers TEXT NOT NULL, inputs TEXT NOT NULL, created_at TEXT NOT NULL
+                );
             """)
 
     @contextmanager
@@ -110,7 +127,9 @@ class Storage:
         self.project(project_id)
         with self.connect() as db:
             return [dict(row) for row in db.execute(
-                "SELECT * FROM sessions WHERE project_id=? ORDER BY updated_at DESC", (project_id,))]
+                """SELECT * FROM sessions WHERE project_id=?
+                   AND id NOT IN (SELECT session_id FROM research_sessions)
+                   ORDER BY updated_at DESC""", (project_id,))]
 
     def create_session(self, project_id):
         self.project(project_id)
@@ -151,11 +170,13 @@ class Storage:
             raise AppError(404, "任务不存在。")
         return result
 
-    def create_run(self, request_id, session_id, message):
+    def create_run(self, request_id, session_id, message, research_inputs=None):
         now = timestamp()
         with self.connect() as db:
             db.execute("INSERT INTO runs (id, session_id, message, status, created_at) VALUES (?, ?, ?, 'queued', ?)",
                        (request_id, session_id, message, now))
+            if research_inputs is not None:
+                db.execute("INSERT INTO research_runs VALUES (?, ?)", (request_id, research_inputs))
             db.execute("INSERT INTO messages (session_id, run_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
                        (session_id, request_id, message, now))
             db.execute("""UPDATE sessions SET updated_at=?,

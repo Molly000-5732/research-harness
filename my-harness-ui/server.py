@@ -11,11 +11,12 @@ from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
 from harness import HarnessManager, safe_error
+from research import Research, STAGES
 from storage import AppError, Storage
 
 
 ROOT = Path(__file__).resolve().parent
-ASSETS = {"/": "index.html", "/app.js": "app.js", "/styles.css": "styles.css"}
+ASSETS = {"/": "index.html", "/app.js": "app.js", "/research.js": "research.js", "/styles.css": "styles.css"}
 
 
 class DataLock:
@@ -70,6 +71,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def dispatch(self, method):
         try:
+            port = self.server.server_port
+            if self.headers.get("Host") not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
+                raise AppError(403, "请通过本机地址访问工作台。")
             path = urlsplit(self.path).path
             if method == "GET" and path in ASSETS:
                 asset = ROOT / ASSETS[path]
@@ -113,9 +117,42 @@ class Handler(BaseHTTPRequestHandler):
             return 200, store.session(parts[2])
         if method == "GET" and len(parts) == 3 and parts[:2] == ["api", "runs"]:
             return 200, {"run": store.run(parts[2])}
+        if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "approval":
+            approval = self.server.manager.approval(parts[2], data if method == "POST" else None)
+            return 200, {"approval": approval}
+        if len(parts) >= 4 and parts[:2] == ["api", "projects"] and parts[3] == "research":
+            return self.research_api(method, parts[2], parts[4:], data)
         if method == "POST" and parts == ["api", "chat"]:
+            with store.connect() as db:
+                if db.execute("SELECT 1 FROM research_sessions WHERE session_id=?",
+                              (data.get("session_id") if isinstance(data.get("session_id"), str) else None,)).fetchone():
+                    raise AppError(400, "请从对应科研阶段发送消息。")
             run = self.server.manager.submit(data.get("session_id"), data.get("request_id"), data.get("message"))
             return 202, {"run": run}
+        raise AppError(404, "接口不存在。")
+
+    def research_api(self, method, project_id, parts, data):
+        research = self.server.research
+        if not parts and method == "GET":
+            return 200, research.state(project_id)
+        if method != "POST":
+            raise AppError(404, "接口不存在。")
+        manager = self.server.manager
+        with manager.lock:
+            if not parts:
+                if manager.active:
+                    raise AppError(409, "请等待当前任务完成后修改研究背景。")
+                return 200, research.update_background(project_id, data.get("background"))
+            if len(parts) == 2 and parts[0] in STAGES:
+                stage, action = parts
+                if action == "session":
+                    return 200, {"session_id": research.session(project_id, stage)}
+                if action == "chat":
+                    return 202, {"run": research.send(project_id, stage, data)}
+                if action == "confirm":
+                    if manager.active:
+                        raise AppError(409, "请等待当前任务完成后确认结果。")
+                    return 200, research.confirm(project_id, stage, data)
         raise AppError(404, "接口不存在。")
 
 
@@ -124,6 +161,7 @@ def make_server(port, storage, manager):
     server.daemon_threads = True
     server.storage = storage
     server.manager = manager
+    server.research = Research(storage, manager)
     return server
 
 

@@ -1,6 +1,6 @@
 # Research Harness
 
-本地 AI 科研工作台，使用官方 DeepSeek Harness Python SDK 的完整 `sdk` profile。支持按项目组织会话、多轮交流、历史展示和服务重启后的会话恢复。
+本地 AI 科研工作台，使用官方 DeepSeek Harness Python SDK 的完整 `sdk` profile。在同一个项目中组织多轮会话、文献调研、方案规划与实验执行。
 
 ## 完整文档
 
@@ -41,16 +41,22 @@ python3 -m venv .venv
 
 Linux 或 macOS 使用 `.venv/bin/python my-harness-ui/server.py`。打开 [本地页面](http://127.0.0.1:8001)。服务监听 `127.0.0.1`，按 Ctrl+C 关闭服务和其 SDK 运行时。
 
-## 使用
+## 科研流程
 
-1. 点击添加项目，填写项目名称和已存在的本机绝对目录。
-2. 点击新建会话，发送研究问题或任务。
-3. 在同一会话继续交流，历史自动保存在本机。
-4. 切换项目或会话可查看各自历史。重启服务后选择原会话即可继续。
+先点击「添加项目」，填写名称和已存在的本机绝对目录，再到「研究总览」保存背景。
+
+| 阶段 | 使用方式 |
+| --- | --- |
+| 问题调研 | 让 Harness 搜索并阅读论文。确认研究问题后，文献库保存本轮的文献清单，包括题目、可用摘要、AI 分析和来源。 |
+| 痛点定位 | 根据已确认的研究问题和逐篇论文材料提出痛点。通过对话调整后，确认要解决的痛点。 |
+| 方案规划 | 根据项目背景和已确认痛点生成方案。可继续对话修改，也可编辑最终确认内容。 |
+| 实验验证 | 点击「运行实验」，让 Harness 在项目目录执行已确认的方案，根据实际工具输出和产物分析结果。 |
+
+每个阶段各有一个持久 Session，刷新或重启服务后仍可继续。下一阶段读取上游已确认的内容。更新上游后，下游旧结果会标记过期，并保留供查阅。「会话」页可另外新建普通聊天。
 
 项目目录是 Agent 的工作目录，文件工具和 Shell 在该目录执行任务。运行 Python 时，使用本机或项目已配置的 Python 环境和依赖。网页搜索需要搜索提供方可用的凭据、网络和服务支持。模型调用、文件操作和工具执行均由官方 Harness 完成。
 
-当前采用 `workspace-write` 权限预设。需要人工批准的操作由后台审批线程明确拒绝，AI 提问由回调取消，原因会保存在任务记录并显示在页面中。完整交互界面可在现有 SDK 管理层上继续扩展。
+当前采用 `workspace-write` 权限预设。实验验证页支持当前 Session 的单次工具审批，其他会话需要人工批准的操作会被拒绝并记录原因。
 
 Windows 沙箱需要项目目录由当前用户拥有，并具备包括 `WRITE_OWNER` 在内的完整权限。仅继承 Modify 权限的目录可能出现 `SetNamedSecurityInfoW` 错误。验证中为应用新建的验收目录补齐当前用户完整权限后，Python 已在 `workspace-write` 下成功执行。参考[Windows 沙箱要求](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sandbox/sandbox-windows-acl/README.zh.md)。
 
@@ -63,7 +69,7 @@ Windows 沙箱需要项目目录由当前用户拥有，并具备包括 `WRITE_O
 | `--env-file` | 仓库根目录的 `.env` | 本机环境配置文件 |
 | `--model` | `deepseek-v4-flash` | `deepseek-official` 路由中的模型 ID |
 
-启动环境中的变量优先于 `--env-file`。可选的 `DEEPSEEK_BASE_URL` 用于兼容网关。旧的位置参数 `python server.py <Harness目录>` 仍可用于读取该目录的 `.env`；执行采用 SDK 配套运行时。
+启动环境中的变量优先于 `--env-file`。可选的 `DEEPSEEK_BASE_URL` 用于兼容网关。使用旧的位置参数 `python server.py <Harness目录>` 时，应用从该目录读取 `.env`，并使用 SDK 配套运行时执行任务。
 
 Windows `0.2.2rc2` 运行时存在非 C 盘启动时原生模块加载失败的问题。本应用将运行时进程目录设置为 `C:\`，SDK 的 `cwd` 仍明确指定项目目录。该处理已用于验证 D 盘项目的真实调用。参考[上游问题](https://github.com/deepseek-ai/deepseek-harness/discussions/10269)。
 
@@ -74,8 +80,10 @@ my-harness-ui/
   server.py       HTTP 接口、参数和数据目录锁
   harness.py      官方 SDK、项目运行时、Session、后台任务与交互回调
   storage.py      SQLite 项目索引、展示消息和任务状态
+  research.py     阶段会话、提示词、文献与已确认版本
   index.html      页面结构
   app.js          项目切换、会话加载、发送与任务轮询
+  research.js     科研导航、阶段交互、文献库和实验审批
   styles.css      页面样式
   tests/          无密钥回归测试
 .research-harness/
@@ -100,6 +108,10 @@ my-harness-ui/
 | `GET /api/sessions/{id}` | 获取会话、消息和任务 |
 | `POST /api/chat` | 用 `session_id`、`request_id`、`message` 提交任务，返回 `202` 和 `run` |
 | `GET /api/runs/{id}` | 获取任务状态、结果、错误及交互说明 |
+| `GET /api/projects/{id}/research` | 获取研究背景、各阶段状态和文献库 |
+| `POST /api/projects/{id}/research` | 保存研究背景 |
+| `POST /api/projects/{id}/research/{stage}/{action}` | `session` 打开阶段会话，`chat` 发送，`confirm` 确认输出 |
+| `GET/POST /api/runs/{id}/approval` | 查询或回答当前实验的工具审批 |
 
 任务状态为 `queued`、`running`、`completed`、`error` 或 `interrupted`。同一请求 ID用于不同消息返回 `409`，其他任务执行期间的新请求也返回 `409`。页面每秒轮询当前任务，最终回复在写入 SQLite 后可读取。
 
@@ -108,6 +120,7 @@ my-harness-ui/
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s my-harness-ui/tests -v
 node --check my-harness-ui/app.js
+node --check my-harness-ui/research.js
 ```
 
-无密钥测试覆盖存储、路径校验、多轮及隔离、恢复、请求幂等、忙碌拒绝、交互说明、运行时失败和 HTTP 接口。真实模型验收应另外验证重启召回、Python 输出文件和网页搜索结果。
+无密钥测试覆盖项目与会话恢复、请求幂等、阶段交接、旧结果失效、文献解析及工具审批。真实 SDK 验收包括网页搜论文、Python 生成并读回 CSV，以及重启后继续实验会话。

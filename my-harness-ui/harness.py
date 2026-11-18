@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import uuid
 
 from deepseek_harness import DeepSeekHarness
 
@@ -45,6 +46,11 @@ class ProjectRuntime:
         self.lock = threading.Lock()
         self.approvals = None
         self.current_run = None
+        self.experiment_session = None
+        self.approval_lock = threading.Lock()
+        self.pending_approval = None
+        self.tool_calls = {}
+        self.closing = False
         # The 0.2.2rc2 packaged Windows VFS resolves native modules under C:\snapshot.
         # Keep the process there while SDK initialization sets the project workspace.
         runtime_cwd = str(Path("C:/")) if os.name == "nt" else project["directory"]
@@ -77,8 +83,11 @@ class ProjectRuntime:
             try:
                 if request.method == "approval/request":
                     tool = request.payload.get("toolName", "未知工具")
-                    self.add_notice(f"已拒绝需要人工批准的操作（{tool}）。当前版本尚未提供审批界面。")
-                    self.sdk.client.respond(request.id, {"outcome": "rejected"})
+                    if self.experiment_session and request.payload.get("sessionId") == self.experiment_session:
+                        self.review_approval(request)
+                    else:
+                        self.add_notice(f"已拒绝需要人工批准的操作（{tool}）。请在实验验证页处理实验审批。")
+                        self.sdk.client.respond(request.id, {"outcome": "rejected"})
                 else:
                     self.sdk.client.respond_error(request.id, code=-32601, message="Unsupported client request")
             except Exception as error:
@@ -88,6 +97,79 @@ class ProjectRuntime:
                 finally:
                     self.sdk.close()
                 return
+
+    def review_approval(self, request):
+        wake = threading.Event()
+        pending = {
+            "id": uuid.uuid4().hex, "run_id": self.current_run,
+            "tool": safe_error(request.payload.get("toolName", "未知工具")),
+            "reason": safe_error(request.payload.get("reason") or ""),
+            "call_id": request.payload.get("callId"),
+            "wake": wake, "outcome": "cancelled",
+        }
+        with self.approval_lock:
+            self.pending_approval = pending
+            if self.closing:
+                wake.set()
+        try:
+            wake.wait(300)
+            with self.approval_lock:
+                outcome = pending["outcome"]
+                wake.set()
+            self.sdk.client.respond(request.id, {"outcome": outcome})
+            labels = {"allowed-once": "已批准一次", "rejected": "已拒绝", "cancelled": "未批准，操作已取消"}
+            self.add_notice(f"{labels[outcome]}：{pending['tool']}")
+        finally:
+            with self.approval_lock:
+                self.pending_approval = None
+
+    def approval(self, run_id, decision=None):
+        with self.approval_lock:
+            pending = self.pending_approval
+            if not pending or pending["run_id"] != run_id or pending["wake"].is_set():
+                if decision is not None:
+                    raise AppError(409, "审批已结束，请刷新任务状态。")
+                return None
+            tool_name, arguments = self.tool_calls.get(pending["call_id"], ("", ""))
+            if tool_name != pending["tool"]:
+                arguments = ""
+            if decision is None:
+                return {**{key: pending[key] for key in ("id", "tool", "reason")}, "arguments": arguments}
+            if decision.get("id") != pending["id"] or decision.get("outcome") not in ("allowed-once", "rejected"):
+                raise AppError(409, "审批请求已变化，或审批决定无效。")
+            if decision["outcome"] == "allowed-once" and not arguments:
+                raise AppError(409, "暂未取得工具参数，当前可拒绝该请求。")
+            pending["outcome"] = decision["outcome"]
+            pending["wake"].set()
+
+    def on_notification(self, notification):
+        if notification.method != "session.event":
+            return
+        event = notification.payload.get("event") or {}
+        data = event.get("data") or {}
+        if event.get("type") == "tool/call" and notification.payload.get("sessionId") == self.experiment_session:
+            arguments = data.get("arguments")
+            if isinstance(arguments, str) and data.get("callId"):
+                with self.approval_lock:
+                    self.tool_calls[data["callId"]] = (
+                        data.get("name"), safe_error(arguments) if len(arguments) <= 6000 else "",
+                    )
+
+    def record_experiment(self, result):
+        tools = {}
+        for event in result.events:
+            data = event.get("data", {})
+            if event.get("type") == "tool/call":
+                tools[data.get("callId")] = data.get("name", "工具")
+                if data.get("name") in ("bash", "pwsh"):
+                    self.add_notice(f"{data['name']} · 执行参数\n" + safe_error(data.get("arguments", "")))
+            elif event.get("type") == "tool/result":
+                message = data.get("message") or {}
+                tool = tools.get(message.get("toolCallId"), "工具")
+                parts = message.get("content") or []
+                output = "\n".join(part.get("text", "") for part in parts if part.get("type") == "text")
+                status = "工具报错" if message.get("isError") else "返回结果"
+                self.add_notice(safe_error(f"{tool} · {status}\n{output[-1800:]}"))
 
     def on_question(self, request, cancelled):
         questions = "；".join(question.get("question", "") for question in request.questions)
@@ -104,6 +186,10 @@ class ProjectRuntime:
         return self.sessions[session_id]
 
     def close(self):
+        with self.approval_lock:
+            self.closing = True
+            if self.pending_approval:
+                self.pending_approval["wake"].set()
         with self.lock:
             self.sdk.close()
         if self.approvals and self.approvals is not threading.current_thread():
@@ -117,12 +203,12 @@ class HarnessManager:
         self.model = model
         self.sdk_factory = sdk_factory
         self.runtimes = {}
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.active = None
         self.worker = None
         self.closing = False
 
-    def submit(self, session_id, request_id, message):
+    def submit(self, session_id, request_id, message, *, prompt=None, research_inputs=None, experiment=False):
         session_id = required_text(session_id, "会话 ID", 100)
         request_id = required_text(request_id, "请求 ID", 100)
         message = required_text(message, "消息内容")
@@ -140,13 +226,14 @@ class HarnessManager:
             project = self.storage.project(session["project_id"])
             if not Path(project["directory"]).is_dir():
                 raise AppError(409, "项目目录已失效，请恢复原目录后继续。")
-            self.storage.create_run(request_id, session_id, message)
+            self.storage.create_run(request_id, session_id, message, research_inputs)
             self.active = request_id
-            self.worker = threading.Thread(target=self.execute, args=(project, session, request_id, message))
+            self.worker = threading.Thread(target=self.execute,
+                                           args=(project, session, request_id, prompt or message, experiment))
             self.worker.start()
             return self.storage.run(request_id)
 
-    def execute(self, project, session, request_id, message):
+    def execute(self, project, session, request_id, message, experiment=False):
         runtime = None
         try:
             self.storage.mark_running(request_id)
@@ -159,9 +246,14 @@ class HarnessManager:
                         raise RuntimeError("服务正在关闭，任务已中断。")
                     self.runtimes[project["id"]] = runtime
             runtime.current_run = request_id
+            runtime.experiment_session = session["id"] if experiment else None
             handle = runtime.get_session(session)
             self.storage.mark_started(session["id"])
-            result = handle.run(message)
+            if experiment:
+                result = handle.run(message, on_notification=runtime.on_notification)
+                runtime.record_experiment(result)
+            else:
+                result = handle.run(message)
             reason = result.finish_reason
             if reason == "completed":
                 self.storage.finish(request_id, "completed", result.final_response, finish_reason=reason)
@@ -180,8 +272,19 @@ class HarnessManager:
         finally:
             if runtime:
                 runtime.current_run = None
+                runtime.experiment_session = None
+                with runtime.approval_lock:
+                    runtime.tool_calls.clear()
             with self.lock:
                 self.active = None
+
+    def approval(self, run_id, decision=None):
+        with self.lock:
+            for runtime in self.runtimes.values():
+                if runtime.current_run == run_id:
+                    return runtime.approval(run_id, decision)
+        if decision is not None:
+            raise AppError(409, "审批已结束，请刷新任务状态。")
 
     def close(self):
         with self.lock:

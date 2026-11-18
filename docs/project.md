@@ -4,6 +4,16 @@
 
 ## 1. 项目目标
 
+### 科研流程整合
+
+项目页已增加研究总览、文献库及四个科研阶段。各阶段按项目绑定持久 SDK Session，通过 `research.py` 组织当前输入。问题调研使用 SDK 原生网页工具，确认问题时保存模型回复中的文献清单。痛点定位读取逐篇题目、摘要和 AI 分析。方案接收背景与已确认痛点，实验接收已确认方案并在项目目录用原生工具运行和分析。
+
+SQLite 中的 `research_sessions` 绑定项目、阶段和 Session。每次发送将当前背景及上游确认版本写入 `research_runs`。确认时将编辑后的交接内容存入 `research_confirmations`，拒绝确认基于过期输入的回复。旧版本和阶段对话留在历史中。
+
+科研状态通过 `GET /api/projects/{id}/research` 读取，`POST` 保存背景。子路由 `/{stage}/session`、`/{stage}/chat` 和 `/{stage}/confirm` 分别用于打开阶段 Session、发送和确认结果。实验通过 `GET/POST /api/runs/{id}/approval` 获取及回答当前实验 Session 的工具审批。界面显示工具结果摘录，完整 Harness 历史保存在本地运行数据。
+
+以下基线部分记录核心框架提交 `bfc4352` 的实现与历史路线。
+
 Research Harness 面向本地 AI 辅助科研，围绕科研项目目录组织对话、文件、代码与实验活动。当前核心版已打通创建项目、新建 Session、多轮交流、保存历史和重启继续的流程。
 
 Agent 执行由官方 DeepSeek Harness Python SDK 的完整 `sdk` profile 承担。应用负责用户界面、项目索引、后台任务和展示记录。后续逐步扩展为文献调研、假设形成、实验设计、执行、分析与研究报告的连续工作台。

@@ -508,3 +508,83 @@ dialog .dialog-error {
     margin: 14px 20px 0;
   }
 }
+#session-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#research-nav {
+  flex: 0 0 auto;
+  flex-direction: row;
+  gap: 4px;
+  padding: 8px clamp(12px, 3vw, 36px);
+  background: white;
+  border-bottom: 1px solid #e4eae7;
+}
+
+.research-tab {
+  flex: 0 0 auto;
+  padding: 10px 13px;
+  border-radius: 7px;
+  background: transparent;
+  color: #526e64;
+  font-size: 13px;
+}
+
+.research-tab:hover, .research-tab[aria-current="page"] {
+  background: #e9f2ec;
+  color: #245e4d;
+}
+
+#research-panel, #approval-panel {
+  background: white;
+  border-bottom: 1px solid #e4eae7;
+  padding: 14px clamp(16px, 3vw, 36px);
+  overflow: auto;
+  max-height: 32dvh;
+}
+
+#research-panel.research-full {
+  flex: 1;
+  max-height: none;
+  padding-top: 24px;
+}
+
+.research-actions, .research-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.research-actions h2 { margin-right: auto; }
+.research-grid { margin-top: 24px; }
+.research-warning { color: #86591c; }
+.research-revisions { margin-top: 10px; }
+.research-revisions details { margin: 8px 0 0 12px; }
+#research-panel p, #approval-panel p, .research-revisions pre, #approval-panel pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.paper-entry {
+  border: 1px solid #dde8e0;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 14px 0;
+}
+
+.paper-entry h3 { margin: 0; font-size: 15px; }
+.paper-entry a { color: #245e4d; }
+#approval-panel { background: #faf5e9; }
+#approval-panel button { margin-right: 8px; }
+#research-content {
+  border: 1px solid #d5e0d8;
+  border-radius: 8px;
+  padding: 12px;
+}
