@@ -1,0 +1,42 @@
+- id: web
+  config:
+    searchProvider: deepseek-search-api
+    fetchProvider: deepseek-fetch-api
+- id: web-deepseek-api
+  config:
+    searchBilling: api-key
+    fetchBilling: api-key
+- id: web-fetch-http
+  disabled: true
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: agent-instructions
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-agent-team
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-plugin-manager
+  disabled: true
+
+- id: system-prompt
+  config:
+    personaPrefix: You are a research evidence analyst. Load the academic skill for the current bounded task, distinguish full text from search snippets, and use only the configured DeepSeek web providers.

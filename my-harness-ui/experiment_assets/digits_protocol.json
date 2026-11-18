@@ -1,0 +1,43 @@
+{
+  "id": "digits-noise-v1",
+  "dataset": "sklearn.datasets.load_digits",
+  "samples": 1797,
+  "features": 64,
+  "classes": 10,
+  "normalization": "pixels / 16.0",
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "testFraction": 0.25,
+  "trainSamples": 500,
+  "testNoiseSigma": 0.3,
+  "augmentationSigma": 0.25,
+  "augmentationCopies": 2,
+  "models": [
+    "baseline",
+    "ablation",
+    "improved"
+  ],
+  "parameters": {
+    "baseline": {
+      "C": 1,
+      "max_iter": 1000
+    },
+    "rbf": {
+      "C": 10,
+      "kernel": "rbf",
+      "gamma": "scale"
+    }
+  },
+  "metrics": [
+    "accuracy",
+    "macro_f1",
+    "fit_seconds"
+  ],
+  "acceptance": {
+    "minNoisyAccuracyGain": 0.01,
+    "maxCleanAccuracyDrop": 0.02
+  }
+}

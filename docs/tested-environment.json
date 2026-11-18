@@ -1,0 +1,17 @@
+{
+  "appVersion": "2026.11.18-fulltext",
+  "testedPlatform": "Windows",
+  "python": "3.14.6",
+  "node": "24.17.0",
+  "harness": "0.2.2-rc.1 (npm) / source checkout also tested",
+  "academicPlugin": "0.1.0",
+  "packages": {
+    "pypdf": "7.1.0",
+    "numpy": "2.3.5",
+    "scikit-learn": "1.7.2",
+    "scipy": "1.18.1",
+    "joblib": "1.6.0",
+    "threadpoolctl": "3.8.0",
+    "cloudpickle": "3.1.2"
+  }
+}

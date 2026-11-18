@@ -21,3 +21,16 @@ node_modules/
 .vscode/
 .DS_Store
 Thumbs.db
+/data/
+
+# Portable installation state
+/.venv/
+/runtime/
+/local-state/
+/config.json
+
+# Machine-local verification notes and packaging outputs.
+/VALIDATION*.md
+/INTEGRATION-V2.md
+*.zip
+.pytest_cache/
